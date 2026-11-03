@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบตารางทำงาน (Firebase Realtime)</title>
+    <!-- Tailwind CSS สำหรับความสวยงาม -->
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { font-family: 'Line Seed', 'Sarabun', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 min-h-screen flex flex-col">
+
+    <!-- แถบด้านบน (Header) -->
+    <header class="bg-blue-600 text-white shadow-md p-4 flex justify-between items-center">
+        <h1 class="text-xl font-bold">📆 ระบบตารางการทำงานทีม</h1>
+        <div>
+            <span id="userStatus" class="mr-2 text-sm bg-blue-700 px-3 py-1 rounded-full">สถานะ: พนักงานทั่วไป (ดูได้อย่างเดียว)</span>
+            <button id="authBtn" class="bg-white text-blue-600 font-semibold px-4 py-1 rounded hover:bg-gray-100 transition">ล็อกอินหัวหน้า</button>
+        </div>
+    </header>
+
+    <!-- ส่วนเนื้อหาหลัก -->
+    <main class="flex-grow p-4 md:p-8 max-w-6xl mx-auto w-full">
+        <!-- ฟอร์มจัดการข้อมูล (จะแสดงเฉพาะเมื่อหัวหน้าล็อกอินแล้วเท่านั้น) -->
+        <div id="managerPanel" class="hidden bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
+            <h2 class="text-lg font-bold mb-4 text-blue-600">🛠️ แผงควบคุมสำหรับหัวหน้างาน</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <input type="text" id="workerName" placeholder="ชื่อพนักงาน" class="border p-2 rounded w-full">
+                <input type="text" id="workShift" placeholder="กะการทำงาน (เช่น เช้า, บ่าย, ดึก)" class="border p-2 rounded w-full">
+                <input type="date" id="workDate" class="border p-2 rounded w-full">
+            </div>
+            <button id="saveBtn" class="bg-green-500 text-white px-6 py-2 rounded font-semibold hover:bg-green-600 transition">บันทึกลงตารางงาน</button>
+        </div>
+
+        <!-- ตารางแสดงผลงานที่ทุกคนจะเห็นตรงกันแบบเรียบร้อย -->
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold">📅 ตารางงานปัจจุบัน (ข้อมูลอัปเดตเรียลไทม์)</h2>
+                <button id="exportBtn" class="bg-gray-700 text-white px-4 py-1.5 rounded text-sm hover:bg-gray-800 transition">📥 ดาวน์โหลดตารางงาน</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-100 border-b border-gray-200">
+                            <th class="p-3">วันที่</th>
+                            <th class="p-3">ชื่อพนักงาน</th>
+                            <th class="p-3">กะทำงาน</th>
+                            <th id="thAction" class="p-3 hidden">การจัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scheduleTableBody">
+                        <tr>
+                            <td colspan="4" class="p-4 text-center text-gray-500">กำลังโหลดข้อมูลตารางงาน...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- ป็อปอัปหน้าต่างล็อกอิน -->
+    <div id="loginModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+        <div class="bg-white p-6 rounded-lg max-w-sm w-full shadow-lg">
+            <h3 class="text-lg font-bold mb-4">🔐 เข้าสู่ระบบหัวหน้างาน</h3>
+            <input type="email" id="loginEmail" placeholder="อีเมลหัวหน้างาน" class="border p-2 rounded w-full mb-3">
+            <input type="password" id="loginPassword" placeholder="รหัสผ่าน" class="border p-2 rounded w-full mb-4">
+            <div class="flex justify-end gap-2">
+                <button id="closeLoginBtn" class="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300">ยกเลิก</button>
+                <button id="doLoginBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">เข้าสู่ระบบ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- เชื่อมต่อโมดูล Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://gstatic.com";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://gstatic.com";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from "https://gstatic.com";
+
+        // คอนฟิกหลักที่คุณสร้างไว้เชื่อมมาที่นี่
+        const firebaseConfig = {
+          apiKey: "AIzaSyBQ-gXhDbRsWR80syCSNhb0zRuW2ycpyb4",
+          authDomain: "://firebaseapp.com",
+          projectId: "best-service-kk",
+          storageBucket: "best-service-kk.firebasestorage.app",
+          messagingSenderId: "111306463136",
+          appId: "1:111306463136:web:55f8cfca541dc7451e76c5",
+          measurementId: "G-GMW4D9E16F"
+        };
+
+        // เริ่มต้นการทำงานระบบหลังบ้าน
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentManager = null;
+        let localData = [];
+
+        // ส่วนควบคุม UI และปุ่มต่างๆ
+        const authBtn = document.getElementById('authBtn');
+        const userStatus = document.getElementById('userStatus');
+        const managerPanel = document.getElementById('managerPanel');
+        const loginModal = document.getElementById('loginModal');
+        const scheduleTableBody = document.getElementById('scheduleTableBody');
+        const thAction = document.getElementById('thAction');
+
+        // ติดตามสถานะผู้ใช้ (ล็อกอินอยู่หรือไม่)
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentManager = user;
+                authBtn.innerText = "ออกจากระบบ";
+                userStatus.innerText = `สถานะ: หัวหน้างาน (${user.email})`;
+                userStatus.className = "mr-2 text-sm bg-green-600 px-3 py-1 rounded-full text-white";
+                managerPanel.classList.remove('hidden');
+                thAction.classList.remove('hidden');
+            } else {
+                currentManager = null;
+                authBtn.innerText = "ล็อกอินหัวหน้า";
+                userStatus.innerText = "สถานะ: พนักงานทั่วไป (ดูได้อย่างเดียว)";
+                userStatus.className = "mr-2 text-sm bg-blue-700 px-3 py-1 rounded-full text-white";
+                managerPanel.classList.add('hidden');
+                thAction.classList.add('hidden');
+            }
+        });
+
+        // เปิด-ปิด หน้าต่างล็อกอิน
+        authBtn.addEventListener('click', () => {
+            if (currentManager) {
+                signOut(auth);
+            } else {
+                loginModal.classList.remove('hidden');
+            }
+        });
+        document.getElementById('closeLoginBtn').addEventListener('click', () => loginModal.classList.add('hidden'));
+
+        // ประมวลผลการล็อกอิน
+        document.getElementById('doLoginBtn').addEventListener('click', async () => {
+            const email = document.getElementById('loginEmail').value;
+            const pass = document.getElementById('loginPassword').value;
+            try {
+                await signInWithEmailAndPassword(auth, email, pass);
+                loginModal.classList.add('hidden');
+                document.getElementById('loginEmail').value = '';
+                document.getElementById('loginPassword').value = '';
+            } catch (error) {
+                alert("อีเมลหรือรหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง");
+            }
+        });
+
+        // บันทึกข้อมูลตารางงานใหม่ไปยัง Firebase Firestore
+        document.getElementById('saveBtn').addEventListener('click', async () => {
+            const name = document.getElementById('workerName').value;
+            const shift = document.getElementById('workShift').value;
+            const date = document.getElementById('workDate').value;
+
+            if(!name || !shift || !date) {
+                alert("กรุณากรอกข้อมูลตารางงานให้ครบทุกช่องก่อนบันทึกครับ");
+                return;
+            }
+
+            try {
+                await addDoc(collection(db, "schedules"), {
+                    name: name,
+                    shift: shift,
+                    date: date,
+                    createdAt: new Date().getTime()
+                });
+                document.getElementById('workerName').value = '';
+                document.getElementById('workShift').value = '';
+                document.getElementById('workDate').value = '';
+            } catch (e) {
+                alert("เกิดข้อผิดพลาดในการบันทึก: " + e.message);
+            }
+        });
+
+        // ดึงข้อมูลและดักจับความเปลี่ยนแปลงแบบเรียลไทม์ (Realtime Sync)
+        const q = query(collection(db, "schedules"), orderBy("date", "asc"));
+        onSnapshot(q, (snapshot) => {
+            scheduleTableBody.innerHTML = '';
+            localData = [];
+            if(snapshot.empty) {
+                scheduleTableBody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">ไม่มีข้อมูลตารางงานในขณะนี้</td></tr>';
+                return;
+            }
+
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                const id = docSnap.id;
+                localData.push({ id, ...data });
+
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-gray-100 hover:bg-gray-50";
+                
+                let actionTd = '';
+                if (currentManager) {
+                    actionTd = `<td class="p-3"><button class="bg-red-500 text-white text-xs px-2 py-1 rounded hover:bg-red-600 transition" onclick="window.deleteSchedule('${id}')">ลบ</button></td>`;
+                }
+
+                tr.innerHTML = `
